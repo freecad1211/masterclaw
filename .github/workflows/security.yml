@@ -29,7 +29,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check for accidentally committed env files
         run: |
-          if git ls-files | grep -E '(^|/)\.env($|\.)|\.pem$|\.key$|id_rsa'; then
-            echo "Potential secret-bearing file is tracked. Review the match."
+          matches="$(git ls-files | grep -E '(^|/)\.env($|\.)|\.pem$|\.key$|id_rsa' | grep -vE '(^|/)\.env\.example$' || true)"
+          if [ -n "$matches" ]; then
+            echo "Potential secret-bearing file is tracked:"
+            echo "$matches"
             exit 1
           fi
