@@ -43,6 +43,7 @@ class DeveloperRunRequest(BaseModel):
     max_agents: int = Field(default=3, ge=1, le=6)
     max_revisions: int = Field(default=2, ge=0, le=3)
     auto_merge: bool = False
+    test_command: Literal["auto", "pytest", "python -m pytest", "npm test", "npm run lint", "npm run build", "pnpm test", "pnpm lint", "pnpm build", "yarn test", "yarn lint", "yarn build", "cargo test", "go test ./...", "python -m compileall forgeclaw"] = "auto"
     tasks: list[DeveloperTask] = Field(default_factory=list, max_length=12)
 
 
