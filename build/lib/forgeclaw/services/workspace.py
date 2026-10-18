@@ -1,0 +1,252 @@
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+from pathlib import Path
+
+
+class WorkspaceError(RuntimeError):
+    pass
+
+
+class GitWorkspace:
+    """Create task-isolated worktrees and execute a small test-command allowlist."""
+
+    def __init__(self, repo_path: str, run_id: str) -> None:
+        self.repo = Path(repo_path).expanduser().resolve()
+        if not (self.repo / ".git").exists():
+            raise WorkspaceError("repo_path must point to a Git repository root.")
+        self.worktrees = self.repo.parent / f".forgeclaw-{self.repo.name}" / "worktrees" / run_id
+        self.worktrees.mkdir(parents=True, exist_ok=True)
+        self._git(["rev-parse", "--show-toplevel"])
+
+    def _git(self, args: list[str], *, cwd: Path | None = None, timeout: int = 30) -> str:
+        result = subprocess.run(
+            ["git", *args], cwd=cwd or self.repo, text=True, capture_output=True,
+            timeout=timeout, check=False,
+            env={
+                **os.environ, "GIT_TERMINAL_PROMPT": "0",
+                "GIT_AUTHOR_NAME": os.getenv("GIT_AUTHOR_NAME", "ForgeClaw Agent"),
+                "GIT_AUTHOR_EMAIL": os.getenv("GIT_AUTHOR_EMAIL", "forgeclaw@localhost"),
+                "GIT_COMMITTER_NAME": os.getenv("GIT_COMMITTER_NAME", "ForgeClaw Agent"),
+                "GIT_COMMITTER_EMAIL": os.getenv("GIT_COMMITTER_EMAIL", "forgeclaw@localhost"),
+            },
+        )
+        if result.returncode:
+            raise WorkspaceError((result.stderr or result.stdout)[-4000:])
+        return result.stdout.strip()
+
+    def ensure_clean_base(self, base_branch: str) -> None:
+        current = self._git(["branch", "--show-current"])
+        if current != base_branch:
+            raise WorkspaceError(f"Repository must be checked out on base branch {base_branch!r}; current branch is {current!r}.")
+        if self._git(["status", "--porcelain"]):
+            raise WorkspaceError("Repository has uncommitted changes. Commit or stash them before Developer Mode.")
+        self._git(["rev-parse", "--verify", base_branch])
+
+    def create(self, branch: str, base_branch: str) -> Path:
+        safe_branch = branch.replace(" ", "-")
+        target = (self.worktrees / safe_branch.split("/")[-1]).resolve()
+        if self.worktrees.resolve() not in target.parents or target.exists():
+            raise WorkspaceError("Worktree path already exists or is invalid.")
+        self._git(["worktree", "add", "-b", safe_branch, str(target), base_branch], timeout=60)
+        self._link_node_modules(target)
+        return target
+
+    def create_integration(self, branch: str, base_branch: str) -> Path:
+        safe_branch = branch.replace(" ", "-")
+        target = (self.worktrees / "integration").resolve()
+        if self.worktrees.resolve() not in target.parents or target.exists():
+            raise WorkspaceError("Integration worktree path already exists or is invalid.")
+        self._git(["worktree", "add", "-b", safe_branch, str(target), base_branch], timeout=60)
+        self._link_node_modules(target)
+        return target
+
+    def _link_node_modules(self, target: Path) -> None:
+        dependencies = self.repo / "node_modules"
+        ignored = subprocess.run(
+            ["git", "check-ignore", "-q", "node_modules"],
+            cwd=self.repo, capture_output=True, check=False,
+        ).returncode == 0
+        if dependencies.is_dir() and ignored and not (target / "node_modules").exists():
+            (target / "node_modules").symlink_to(dependencies, target_is_directory=True)
+
+    def status(self, cwd: Path) -> str:
+        return self._git(["status", "--short", "--branch"], cwd=cwd)
+
+    def context_snapshot(self, cwd: Path, allowed_paths: list[str] | None = None, max_chars: int = 22000) -> str:
+        """Provide bounded, secret-filtered repository context to agents without shell access."""
+        root = cwd.resolve()
+        excluded_dirs = {".git", ".venv", "venv", "node_modules", "__pycache__", ".next", ".forgeclaw", "dist", "build", "coverage", ".ssh", ".gnupg", ".aws", ".azure", ".kube"}
+        excluded_names = {".env", ".env.local", ".env.production", ".npmrc", ".pypirc", ".netrc", "credentials", "credentials.json", "service-account.json", "id_rsa", "id_ed25519"}
+        files: list[str] = []
+        for current, dirs, names in os.walk(root):
+            dirs[:] = sorted(name for name in dirs if name not in excluded_dirs)
+            for name in sorted(names):
+                lowered = name.lower()
+                if name in excluded_names or name.startswith(".env.") or lowered.endswith((".pem", ".key", ".p12", ".pfx", ".jks", ".sqlite3", ".png", ".jpg", ".jpeg", ".gif", ".pdf", ".zip")) or any(token in lowered for token in ("secret", "credential", "private_key", "api_token")):
+                    continue
+                path = Path(current) / name
+                if path.is_symlink():
+                    continue
+                try:
+                    rel = path.relative_to(root).as_posix()
+                except ValueError:
+                    continue
+                files.append(rel)
+                if len(files) >= 400:
+                    break
+            if len(files) >= 400:
+                break
+        key_files = {"README.md", "AGENTS.md", "CLAUDE.md", "pyproject.toml", "package.json", "tsconfig.json", "Cargo.toml", "go.mod", "requirements.txt"}
+        selected: list[str] = []
+        for rel in files:
+            scoped = allowed_paths and any(
+                Path(rel).match(pattern) or rel == pattern.rstrip("/") or rel.startswith(pattern.rstrip("/") + "/")
+                for pattern in allowed_paths
+            )
+            if rel in key_files or rel in {"src/AGENTS.md", "src/CLAUDE.md"} or scoped:
+                selected.append(rel)
+        chunks = ["Repository tree (bounded):\n" + "\n".join(files[:300]), "\nRelevant file excerpts:"]
+        remaining = max_chars - sum(len(part) for part in chunks)
+        for rel in selected[:40]:
+            if remaining <= 0:
+                break
+            try:
+                text = (root / rel).read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            excerpt = text[:min(5000, remaining)]
+            chunk = f"\n--- {rel} ---\n{excerpt}"
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        return "\n".join(chunks)[:max_chars]
+
+    def apply_patch(self, cwd: Path, patch: str) -> None:
+        if not patch.strip() or "diff --git " not in patch:
+            raise WorkspaceError("Model did not return a standard unified Git diff.")
+        if "\x00" in patch:
+            raise WorkspaceError("Patch contains an invalid control sequence.")
+        check = subprocess.run(
+            ["git", "apply", "--check", "--whitespace=error"],
+            input=patch, cwd=cwd, text=True, capture_output=True, timeout=30,
+        )
+        if check.returncode:
+            raise WorkspaceError("Patch validation failed: " + (check.stderr or check.stdout)[-3000:])
+        applied = subprocess.run(
+            ["git", "apply", "--whitespace=error"],
+            input=patch, cwd=cwd, text=True, capture_output=True, timeout=30,
+        )
+        if applied.returncode:
+            raise WorkspaceError("Patch application failed: " + (applied.stderr or applied.stdout)[-3000:])
+
+    def changed_paths(self, cwd: Path) -> list[str]:
+        result = self._git(["diff", "--name-only"], cwd=cwd)
+        untracked = self._git(["ls-files", "--others", "--exclude-standard"], cwd=cwd)
+        return sorted(set(filter(None, result.splitlines() + untracked.splitlines())))
+
+    def diff(self, cwd: Path, base_branch: str) -> str:
+        tracked = self._git(["diff", "--no-ext-diff", f"{base_branch}...HEAD"], cwd=cwd)
+        working = self._git(["diff", "--no-ext-diff"], cwd=cwd)
+        untracked = self._git(["ls-files", "--others", "--exclude-standard"], cwd=cwd).splitlines()
+        extra: list[str] = []
+        for relative in untracked[:100]:
+            result = subprocess.run(
+                ["git", "diff", "--no-index", "--no-ext-diff", "--", "/dev/null", relative],
+                cwd=cwd, text=True, capture_output=True, timeout=15,
+            )
+            if result.returncode in (0, 1):
+                extra.append(result.stdout[:12000])
+        return "\n".join(part for part in (tracked, working, *extra) if part.strip())[:30000]
+
+    def reset_changes(self, cwd: Path) -> None:
+        """Discard only uncommitted changes inside this disposable agent worktree."""
+        self._git(["reset", "--hard", "HEAD"], cwd=cwd)
+        self._git(["clean", "-fd"], cwd=cwd)
+
+    def commit(self, cwd: Path, message: str) -> str:
+        self._git(["add", "-A"], cwd=cwd)
+        if not self._git(["status", "--porcelain"], cwd=cwd):
+            raise WorkspaceError("Refusing to create an empty commit.")
+        self._git(["commit", "-m", message[:160]], cwd=cwd, timeout=60)
+        return self._git(["rev-parse", "HEAD"], cwd=cwd)
+
+    def _resolve_test_command(self, cwd: Path, command: str) -> list[str]:
+        allowed = {
+            "pytest": ["pytest"],
+            "python -m pytest": ["python", "-m", "pytest"],
+            "python -m compileall forgeclaw": ["python", "-m", "compileall", "forgeclaw"],
+            "npm test": ["npm", "test"],
+            "npm run lint": ["npm", "run", "lint"],
+            "npm run build": ["npm", "run", "build"],
+            "pnpm test": ["pnpm", "test"],
+            "pnpm lint": ["pnpm", "lint"],
+            "pnpm build": ["pnpm", "build"],
+            "yarn test": ["yarn", "test"],
+            "yarn lint": ["yarn", "lint"],
+            "yarn build": ["yarn", "build"],
+            "cargo test": ["cargo", "test"],
+            "go test ./...": ["go", "test", "./..."],
+        }
+        if command != "auto":
+            if command not in allowed:
+                raise WorkspaceError("Test command is not allowlisted.")
+            return allowed[command]
+        python_tests = list(cwd.glob("test_*.py")) or ((cwd / "tests").is_dir() and any((cwd / "tests").rglob("*.py")))
+        if (cwd / "pyproject.toml").exists() or (cwd / "pytest.ini").exists() or python_tests:
+            return allowed["pytest"]
+        if (cwd / "package.json").exists():
+            try:
+                package = json.loads((cwd / "package.json").read_text(encoding="utf-8"))
+                scripts = package.get("scripts", {})
+            except (OSError, ValueError):
+                scripts = {}
+            if (cwd / "pnpm-lock.yaml").exists():
+                manager = "pnpm"
+            elif (cwd / "yarn.lock").exists():
+                manager = "yarn"
+            else:
+                manager = "npm"
+            if scripts.get("test"):
+                return allowed[f"{manager} test"]
+            if scripts.get("lint"):
+                return allowed["npm run lint"] if manager == "npm" else allowed[f"{manager} lint"]
+            if scripts.get("build"):
+                return allowed["npm run build"] if manager == "npm" else allowed[f"{manager} build"]
+            raise WorkspaceError("package.json has no test, lint, or build script.")
+        if (cwd / "Cargo.toml").exists():
+            return allowed["cargo test"]
+        if (cwd / "go.mod").exists():
+            return allowed["go test ./..."]
+        raise WorkspaceError("Could not detect a supported test command; set test_command explicitly.")
+
+    def run_tests(self, cwd: Path, command: str = "auto") -> tuple[int, str]:
+        args = self._resolve_test_command(cwd, command)
+        try:
+            result = subprocess.run(
+                args, cwd=cwd, text=True, capture_output=True, timeout=600, check=False,
+                env={**os.environ, "GIT_TERMINAL_PROMPT": "0", "PYTHONPATH": str(cwd) + os.pathsep + os.environ.get("PYTHONPATH", "")},
+            )
+        except subprocess.TimeoutExpired as exc:
+            return 124, f"Test command timed out after 600 seconds: {exc.cmd}"
+        except OSError as exc:
+            return 127, f"Test command could not start: {type(exc).__name__}"
+        return result.returncode, (result.stdout + "\n" + result.stderr)[-12000:]
+
+    def merge_branch(self, branch: str, integration_path: Path) -> str:
+        try:
+            self._git(["merge", "--no-ff", "--no-edit", branch], cwd=integration_path, timeout=120)
+        except WorkspaceError as exc:
+            subprocess.run(["git", "merge", "--abort"], cwd=integration_path, text=True, capture_output=True)
+            raise WorkspaceError(f"Merge conflict integrating {branch}; manual resolution required.") from exc
+        return self._git(["rev-parse", "HEAD"], cwd=integration_path)
+
+    def merge_to_base(self, integration_branch: str, base_branch: str) -> str:
+        self.ensure_clean_base(base_branch)
+        try:
+            self._git(["merge", "--no-ff", "--no-edit", integration_branch], timeout=120)
+        except WorkspaceError as exc:
+            subprocess.run(["git", "merge", "--abort"], cwd=self.repo, text=True, capture_output=True)
+            raise WorkspaceError("Final merge conflict; base branch was not changed.") from exc
+        return self._git(["rev-parse", "HEAD"])
