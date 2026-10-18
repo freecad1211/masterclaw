@@ -53,6 +53,9 @@ class GitWorkspace:
         if target.exists():
             raise WorkspaceError(f"Worktree path already exists: {target.name}")
         self._git(["worktree", "add", "-b", safe_branch, str(target), base_branch], timeout=60)
+        dependencies = self.repo / "node_modules"
+        if dependencies.is_dir() and not (target / "node_modules").exists():
+            (target / "node_modules").symlink_to(dependencies, target_is_directory=True)
         return target
 
     def create_integration(self, branch: str, base_branch: str) -> Path:
