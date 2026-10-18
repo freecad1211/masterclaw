@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 import logging
+import re
 import time
 from pathlib import Path
 from uuid import uuid4
@@ -26,19 +27,14 @@ async def lifespan(_: FastAPI):
     logger.info("application_stopped", extra={"event": "application_stopped"})
 
 
-app = FastAPI(
-    title="ForgeClaw",
-    description="A self-hosted multi-agent debate and coding workspace.",
-    version="0.4.0",
-    lifespan=lifespan,
-    docs_url="/docs",
-    redoc_url=None,
-)
+app = FastAPI(title="ForgeClaw", description="A self-hosted multi-agent debate and coding workspace.",
+              version="0.4.0", lifespan=lifespan, docs_url="/docs", redoc_url=None)
 
 
 @app.middleware("http")
 async def request_observability(request: Request, call_next):
-    request_id = request.headers.get("x-request-id", "").strip()[:128] or str(uuid4())
+    supplied_id = request.headers.get("x-request-id", "").strip()[:128]
+    request_id = supplied_id if re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", supplied_id) else str(uuid4())
     started = time.perf_counter()
     status_code = 500
     try:
@@ -46,29 +42,22 @@ async def request_observability(request: Request, call_next):
         status_code = response.status_code
         response.headers["X-Request-ID"] = request_id
         response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
         response.headers["Cache-Control"] = "no-store" if request.url.path.startswith("/api/") else "no-cache"
         return response
     except Exception:
-        logger.exception(
-            "request_failed",
-            extra={"event": "request_failed", "request_id": request_id,
-                   "method": request.method, "path": request.url.path,
-                   "status_code": 500, "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
-        )
-        return JSONResponse(
-            status_code=500,
-            content={"detail": "Internal server error", "request_id": request_id},
-            headers={"X-Request-ID": request_id, "X-Content-Type-Options": "nosniff"},
-        )
+        logger.exception("request_failed", extra={"event": "request_failed", "request_id": request_id,
+            "method": request.method, "path": request.url.path, "status_code": 500,
+            "duration_ms": round((time.perf_counter() - started) * 1000, 2)})
+        return JSONResponse(status_code=500, content={"detail": "Internal server error", "request_id": request_id},
+                            headers={"X-Request-ID": request_id, "X-Content-Type-Options": "nosniff",
+                                     "X-Frame-Options": "DENY"})
     finally:
-        logger.info(
-            "request_complete",
-            extra={"event": "request_complete", "request_id": request_id,
-                   "method": request.method, "path": request.url.path,
-                   "status_code": status_code,
-                   "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
-        )
+        logger.info("request_complete", extra={"event": "request_complete", "request_id": request_id,
+            "method": request.method, "path": request.url.path, "status_code": status_code,
+            "duration_ms": round((time.perf_counter() - started) * 1000, 2)})
 
 
 app.include_router(router)
@@ -95,8 +84,6 @@ def health() -> dict[str, str]:
 
 @app.get("/ready", tags=["system"])
 def readiness() -> dict[str, str]:
-    # Initialization creates the database schema; this lightweight check verifies the configured DB is reachable.
     from forgeclaw.storage.database import check_database
-
     check_database(settings.database_path)
     return {"status": "ready", "service": "forgeclaw"}
