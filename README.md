@@ -2,15 +2,16 @@
 
 ForgeClaw is a free-first, self-hostable multi-agent workspace for knowledge-grounded debate and collaborative coding.
 
-## MVP scope
+## Current MVP
 
-- FastAPI service for debate sessions
-- Role-separated agent interface (architect, critic, judge)
-- SQLite persistence for debate records
-- Deterministic demo agents so the flow can be tested without an API key
-- Planned adapters for OpenAI-compatible model APIs and Obsidian
+- FastAPI API for debate sessions and SQLite persistence
+- Bounded proposal → critique → revision → decision workflow
+- Deterministic demo mode that runs without a model API key
+- OpenAI-compatible `/chat/completions` adapter for hosted gateways and local compatible servers
+- Separate core instructions and role prompts for architect, critic, and judge
+- GitHub Actions test workflow
 
-> The current demo provider is deterministic scaffolding, not a real LLM. Model and Obsidian integrations are the next milestones.
+**Model mode selection:** if `LLM_BASE_URL` and `LLM_MODEL` are set, ForgeClaw uses the configured model. Otherwise it uses deterministic demo agents. A configured provider failure returns HTTP 502; it does not silently pretend the demo was a live model response.
 
 ## Quick start
 
@@ -20,10 +21,26 @@ Python 3.11+
 python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
+cp .env.example .env
 uvicorn forgeclaw.main:app --reload
 ```
 
 Open http://127.0.0.1:8000/docs.
+
+## Configure a model
+
+Edit the local `.env` file:
+
+```dotenv
+LLM_BASE_URL=https://your-provider.example/v1
+LLM_API_KEY=your-key-if-required
+LLM_MODEL=your-model-id
+LLM_TIMEOUT_SECONDS=60
+```
+
+The base URL must be the API root that exposes `POST {LLM_BASE_URL}/chat/completions`. This is a compatibility contract, not a claim that every provider uses the same URL or request schema. For a local server, use its actual reachable base URL; the API key may be blank if the server does not require one.
+
+Never commit real keys. Do not expose the API publicly without authentication and TLS.
 
 ## Test
 
@@ -46,6 +63,15 @@ curl -X POST http://127.0.0.1:8000/api/v1/debates \
   -d '{"topic":"How should ForgeClaw store agent decisions?","max_rounds":2}'
 ```
 
+## Prompt library
+
+- `prompts/system.md`: shared rules for evidence, uncertainty, safety, and verification
+- `prompts/roles/architect.md`: design and acceptance criteria
+- `prompts/roles/critic.md`: independent adversarial review
+- `prompts/roles/judge.md`: evidence-weighted synthesis
+
+The prompts are original ForgeClaw instructions informed by public documentation and source code; they are not claimed to be exact copies of any vendor's private system prompt. See [prompt sources and design notes](docs/PROMPT_SOURCES.md).
+
 ## Design principles
 
 1. Orchestration owns workflow; agents return structured messages.
@@ -60,8 +86,9 @@ curl -X POST http://127.0.0.1:8000/api/v1/debates \
 
 - [x] API skeleton and SQLite persistence
 - [x] Deterministic debate flow for integration tests
-- [ ] OpenAI-compatible model provider
-- [ ] Per-agent model/system-prompt configuration
+- [x] OpenAI-compatible model provider
+- [x] Role-specific prompt library
+- [ ] Per-agent model and temperature configuration
 - [ ] Obsidian read/search adapter
 - [ ] Draft-only Obsidian decision-note writer
 - [ ] Session UI and approval queue
@@ -70,4 +97,4 @@ curl -X POST http://127.0.0.1:8000/api/v1/debates \
 
 ## Security
 
-Do not expose this API publicly without authentication and TLS. Never commit API keys, Obsidian tokens, or private Vault content. Keep agent and Obsidian endpoints on a private network or authenticated tunnel.
+Treat retrieved documents and tool output as untrusted input. Do not expose this API publicly without authentication and TLS. Never commit API keys, Obsidian tokens, or private Vault content. Keep agent and Obsidian endpoints on a private network or authenticated tunnel.
