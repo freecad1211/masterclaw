@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import httpx
 
 from forgeclaw.core.settings import settings
@@ -12,20 +14,21 @@ class ModelProviderError(RuntimeError):
 class OpenAICompatibleClient:
     """Minimal client for providers exposing POST /chat/completions."""
 
-    def __init__(self) -> None:
-        self.base_url = settings.llm_base_url.rstrip("/")
-        self.api_key = settings.llm_api_key
-        self.model = settings.llm_model
-        self.timeout = settings.llm_timeout_seconds
+    def __init__(self, overrides: dict[str, Any] | None = None) -> None:
+        overrides = overrides or {}
+        self.base_url = str(overrides.get("base_url") or settings.llm_base_url).rstrip("/")
+        self.api_key = str(overrides.get("api_key") or settings.llm_api_key)
+        self.model = str(overrides.get("model") or settings.llm_model).strip()
+        self.timeout = float(overrides.get("timeout_seconds") or settings.llm_timeout_seconds)
+        self.temperature = float(overrides.get("temperature", 0.1))
 
     @property
     def is_configured(self) -> bool:
-        # API keys are optional for local endpoints such as Ollama-compatible gateways.
         return bool(self.base_url and self.model)
 
-    def complete(self, *, system_prompt: str, user_prompt: str) -> str:
+    def complete(self, *, system_prompt: str, user_prompt: str, temperature: float | None = None) -> str:
         if not self.is_configured:
-            raise ModelProviderError("LLM_BASE_URL and LLM_MODEL must be configured.")
+            raise ModelProviderError("Configure LLM_BASE_URL and LLM_MODEL or the corresponding role-specific settings.")
 
         headers = {"Content-Type": "application/json"}
         if self.api_key:
@@ -37,7 +40,7 @@ class OpenAICompatibleClient:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            "temperature": 0.2,
+            "temperature": self.temperature if temperature is None else temperature,
         }
         try:
             response = httpx.post(
@@ -55,7 +58,6 @@ class OpenAICompatibleClient:
         except ModelProviderError:
             raise
         except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError) as exc:
-            # Do not include headers, tokens, or full provider payloads in the exception.
             raise ModelProviderError(
                 f"Model request failed ({type(exc).__name__}). Check endpoint, credentials, and provider logs."
             ) from exc
