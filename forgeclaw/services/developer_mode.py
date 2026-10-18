@@ -84,11 +84,33 @@ class DeveloperModeService:
         self._executor.submit(self.execute, run.id, request)
         return run
 
-    def _emit(self, run: DeveloperRun, agent: str, event_type: str, content: str, task_id: str | None = None) -> None:
-        event = AgentEvent(run_id=run.id, agent=agent, event_type=event_type, content=content[:20000], task_id=task_id)
+    def _emit(self, run: DeveloperRun, agent: str, event_type: str, content: str, task_id: str | None = None, recipient: str | None = None) -> None:
+        event = AgentEvent(run_id=run.id, agent=agent, event_type=event_type, content=content[:20000], task_id=task_id, recipient=recipient)
         with self._lock:
             run.events.append(event)
             run.updated_at = datetime.now(timezone.utc)
+
+    def send_message(self, run_id: str, sender: str, recipient: str, content: str, task_id: str | None = None) -> AgentEvent:
+        run = self.get_run(run_id)
+        if run is None:
+            raise KeyError("Developer run not found.")
+        allowed = {"architect", "implementer", "reviewer", "tester", "integrator"}
+        if sender not in allowed or recipient not in allowed:
+            raise ValueError("Unknown agent role.")
+        self._emit(run, sender, "message", content, task_id, recipient=recipient)
+        return run.events[-1]
+
+    def approve_merge(self, run_id: str) -> DeveloperRun:
+        run = self.get_run(run_id)
+        if run is None:
+            raise KeyError("Developer run not found.")
+        if run.status != "needs_approval":
+            raise ValueError("Only a run in needs_approval status can be merged.")
+        workspace = GitWorkspace(run.repo_path, run.id)
+        run.final_commit = workspace.merge_to_base(run.integration_branch, run.base_branch)
+        run.status = "completed"
+        self._emit(run, "integrator", "merge", f"User approved local merge into {run.base_branch} at {run.final_commit}.")
+        return run
 
     def _complete(self, role: str, task: str, *, system_extra: str = "", temperature: float = 0.1) -> str:
         client = self.models.client_for(role)
@@ -215,7 +237,7 @@ class DeveloperModeService:
                     temperature=0.0,
                 )
                 task.review_output = review[:10000]
-                self._emit(run, "reviewer", "review", review[:8000], task.id)
+                self._emit(run, "reviewer", "review", review[:8000], task.id)\n                self._emit(run, "reviewer", "message", review[:8000], task.id, recipient="implementer")
                 if review.lstrip().startswith("APPROVED"):
                     task.commit_sha = workspace.commit(worktree, f"feat({task.id}): {task.title}")
                     task.status = "passed"
