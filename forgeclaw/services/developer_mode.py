@@ -166,6 +166,10 @@ class DeveloperModeService:
                 raise RuntimeError(f"Task {task.id} owner must be implementer; reviewer and tester run as separate pipeline stages.")
             if not task.allowed_paths:
                 raise RuntimeError(f"Task {task.id} has no allowed_paths; refusing unrestricted edits.")
+            for pattern in task.allowed_paths:
+                candidate = Path(pattern)
+                if candidate.is_absolute() or ".." in candidate.parts or pattern.strip() in {"*", "**", "**/*", "."}:
+                    raise RuntimeError(f"Task {task.id} has an unsafe or unrestricted path scope: {pattern!r}.")
             unknown = set(task.depends_on) - ids
             if unknown:
                 raise RuntimeError(f"Task {task.id} depends on unknown task IDs: {sorted(unknown)}")
