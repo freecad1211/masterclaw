@@ -1,4 +1,4 @@
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, HTTPException
 
 from forgeclaw.models.developer import DeveloperRun, DeveloperRunRequest
 from forgeclaw.services.developer_mode import DeveloperModeService
