@@ -108,7 +108,7 @@ class DeveloperModeService:
             response = self._complete(
                 "architect",
                 "Create a parallelizable software implementation plan for the goal below. Return only a JSON array. "
-                "Each item must have title, description, owner (implementer or tester), depends_on (array of task IDs), "
+                "Each item must have id, title, description, owner (implementer), depends_on (array of task IDs), "
                 "and allowed_paths (non-empty list of repository-relative paths/globs). Use unique short IDs. "
                 "Keep tasks independently committable, avoid overlapping allowed_paths when possible, and include acceptance criteria.\n\n"
                 f"Repository: {run.repo_path}\nGoal:\n{run.goal}",
@@ -196,7 +196,7 @@ class DeveloperModeService:
                 ]
                 if unexpected:
                     raise WorkspaceError(f"Patch changed files outside assigned scope: {unexpected[:20]}")
-                code, test_output = workspace.run_tests(worktree)
+                code, test_output = workspace.run_tests(worktree, request.test_command)
                 task.test_output = f"exit_code={code}\n{test_output}"
                 self._emit(run, "tester", "test", f"pytest exit code: {code}\n{test_output[-5000:]}", task.id)
                 if code != 0:
@@ -266,7 +266,7 @@ class DeveloperModeService:
                 for task in wave:
                     workspace.merge_branch(task.branch, integration_path)
                     self._emit(run, "integrator", "merge", f"Merged {task.branch} into {run.integration_branch}.", task.id)
-            code, output = workspace.run_tests(integration_path)
+            code, output = workspace.run_tests(integration_path, request.test_command)
             self._emit(run, "tester", "test", f"Integration suite exit code: {code}\n{output[-8000:]}")
             if code != 0:
                 run.status = "failed"
