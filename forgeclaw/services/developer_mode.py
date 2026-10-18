@@ -162,6 +162,8 @@ class DeveloperModeService:
         if len(ids) != len(tasks):
             raise RuntimeError("Task IDs must be unique.")
         for task in tasks:
+            if task.owner != "implementer":
+                raise RuntimeError(f"Task {task.id} owner must be implementer; reviewer and tester run as separate pipeline stages.")
             if not task.allowed_paths:
                 raise RuntimeError(f"Task {task.id} has no allowed_paths; refusing unrestricted edits.")
             unknown = set(task.depends_on) - ids
