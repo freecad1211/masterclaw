@@ -21,7 +21,7 @@ Python 3.11+
     cp .env.example .env
     uvicorn forgeclaw.main:app --reload
 
-Open http://127.0.0.1:8000/docs.
+Open http://127.0.0.1:8000/docs. Before using Developer Mode, generate a strong token and set FORGECLAW_API_TOKEN in .env; the write/run/history/message/merge endpoints require an Authorization: Bearer token. For example, generate one with: python -c "import secrets; print(secrets.token_urlsafe(32))".
 
 ## Model configuration
 
@@ -45,7 +45,7 @@ Per-role overrides use FORGECLAW_AGENT_<ROLE>_BASE_URL, _API_KEY, and _MODEL. Su
 - GET /api/v1/developer/runs — list current-process runs
 - GET /api/v1/developer/runs/{run_id} — run status, task status, events, reviews, test output, and commits\n- POST /api/v1/developer/runs/{run_id}/messages — append a directed agent-to-agent message\n- POST /api/v1/developer/runs/{run_id}/approve-merge — explicitly approve a verified integration branch for local merge
 
-Example request:
+Every Developer Mode run/history/message/merge request must include the configured Bearer token in the Authorization header. Example request:
 
     {
       "goal": "Add a feature and cover it with tests",
