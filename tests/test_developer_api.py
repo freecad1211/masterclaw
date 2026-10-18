@@ -21,10 +21,12 @@ def test_developer_metadata_endpoints():
     }
 
 
-def test_run_message_bus_and_merge_approval_state():
+def test_run_message_bus_and_merge_approval_state(monkeypatch):
     from forgeclaw.api.developer_routes import service
     from forgeclaw.models.developer import DeveloperRun
 
+    monkeypatch.setenv("FORGECLAW_API_TOKEN", "test-token")
+    headers = {"Authorization": "Bearer test-token"}
     run = DeveloperRun(
         goal="Test message routing",
         repo_path="/tmp/not-used",
@@ -36,13 +38,14 @@ def test_run_message_bus_and_merge_approval_state():
     with TestClient(app) as client:
         message = client.post(
             f"/api/v1/developer/runs/{run.id}/messages",
+            headers=headers,
             json={
                 "sender": "reviewer",
                 "recipient": "implementer",
                 "content": "Please add an edge-case test.",
             },
         )
-        approval = client.post(f"/api/v1/developer/runs/{run.id}/approve-merge")
+        approval = client.post(f"/api/v1/developer/runs/{run.id}/approve-merge", headers=headers)
 
     assert message.status_code == 200
     assert message.json()["recipient"] == "implementer"
