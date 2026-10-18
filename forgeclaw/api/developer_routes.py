@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+import hmac\nimport os\n\nfrom fastapi import APIRouter, Header, HTTPException
 
 from forgeclaw.models.developer import AgentMessageRequest, DeveloperRun, DeveloperRunRequest
 from forgeclaw.services.developer_mode import DeveloperModeService
@@ -23,7 +23,7 @@ def list_builtin_mcp_tools() -> list[dict[str, str]]:
 
 
 @router.post("/runs", response_model=DeveloperRun, status_code=202)
-def start_developer_run(request: DeveloperRunRequest) -> DeveloperRun:
+def start_developer_run(request: DeveloperRunRequest, _: None = __import__("fastapi").Depends(require_developer_token)) -> DeveloperRun:
     try:
         return service.start(request)
     except Exception as exc:
@@ -44,7 +44,7 @@ def get_developer_run(run_id: str) -> DeveloperRun:
 
 
 @router.post("/runs/{run_id}/messages")
-def send_agent_message(run_id: str, request: AgentMessageRequest) -> dict[str, object]:
+def send_agent_message(run_id: str, request: AgentMessageRequest, _: None = __import__("fastapi").Depends(require_developer_token)) -> dict[str, object]:
     try:
         event = service.send_message(run_id, request.sender, request.recipient, request.content, request.task_id)
         return event.model_dump(mode="json")
@@ -55,7 +55,7 @@ def send_agent_message(run_id: str, request: AgentMessageRequest) -> dict[str, o
 
 
 @router.post("/runs/{run_id}/approve-merge", response_model=DeveloperRun)
-def approve_local_merge(run_id: str) -> DeveloperRun:
+def approve_local_merge(run_id: str, _: None = __import__("fastapi").Depends(require_developer_token)) -> DeveloperRun:
     try:
         return service.approve_merge(run_id)
     except KeyError as exc:
