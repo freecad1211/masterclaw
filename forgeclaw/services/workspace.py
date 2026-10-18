@@ -60,9 +60,7 @@ class GitWorkspace:
         if self.worktrees.resolve() not in target.parents or target.exists():
             raise WorkspaceError("Integration worktree path already exists or is invalid.")
         self._git(["worktree", "add", "-b", safe_branch, str(target), base_branch], timeout=60)
-        dependencies = self.repo / "node_modules"
-        if dependencies.is_dir() and not (target / "node_modules").exists():
-            (target / "node_modules").symlink_to(dependencies, target_is_directory=True)
+        self._link_node_modules(target)
         return target
 
     def _link_node_modules(self, target: Path) -> None:
@@ -86,7 +84,8 @@ class GitWorkspace:
         for current, dirs, names in os.walk(root):
             dirs[:] = sorted(name for name in dirs if name not in excluded_dirs)
             for name in sorted(names):
-                lowered = name.lower()\n                if name in excluded_names or name.startswith(".env.") or lowered.endswith((".pem", ".key", ".p12", ".pfx", ".jks", ".sqlite3", ".png", ".jpg", ".jpeg", ".gif", ".pdf", ".zip")) or any(token in lowered for token in ("secret", "credential", "private_key", "api_token")):
+                lowered = name.lower()
+                if name in excluded_names or name.startswith(".env.") or lowered.endswith((".pem", ".key", ".p12", ".pfx", ".jks", ".sqlite3", ".png", ".jpg", ".jpeg", ".gif", ".pdf", ".zip")) or any(token in lowered for token in ("secret", "credential", "private_key", "api_token")):
                     continue
                 path = Path(current) / name
                 if path.is_symlink():
