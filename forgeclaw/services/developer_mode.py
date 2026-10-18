@@ -84,11 +84,12 @@ class DeveloperModeService:
         self._executor.submit(self.execute, run.id, request)
         return run
 
-    def _emit(self, run: DeveloperRun, agent: str, event_type: str, content: str, task_id: str | None = None, recipient: str | None = None) -> None:
+    def _emit(self, run: DeveloperRun, agent: str, event_type: str, content: str, task_id: str | None = None, recipient: str | None = None) -> AgentEvent:
         event = AgentEvent(run_id=run.id, agent=agent, event_type=event_type, content=content[:20000], task_id=task_id, recipient=recipient)
         with self._lock:
             run.events.append(event)
             run.updated_at = datetime.now(timezone.utc)
+        return event
 
     def send_message(self, run_id: str, sender: str, recipient: str, content: str, task_id: str | None = None) -> AgentEvent:
         run = self.get_run(run_id)
@@ -97,8 +98,7 @@ class DeveloperModeService:
         allowed = {"architect", "implementer", "reviewer", "tester", "integrator"}
         if sender not in allowed or recipient not in allowed:
             raise ValueError("Unknown agent role.")
-        self._emit(run, sender, "message", content, task_id, recipient=recipient)
-        return run.events[-1]
+        return self._emit(run, sender, "message", content, task_id, recipient=recipient)
 
     def approve_merge(self, run_id: str) -> DeveloperRun:
         run = self.get_run(run_id)
