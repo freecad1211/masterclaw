@@ -45,6 +45,17 @@ The optional file handler rotates at the configured byte limit and retains the c
 
 The dashboard polls run status every four seconds. The token is not persisted across browser sessions. For shared machines, remove it from the dashboard and close the tab after use.
 
+## Container deployment
+
+For a self-hosted single-node install, set a strong `FORGECLAW_API_TOKEN` in `.env` and set `FORGECLAW_WORKSPACE_ROOT` to a directory containing only trusted repositories. Ensure container UID/GID `10001` has write access to that directory (use a dedicated workspace directory and a narrowly scoped ACL rather than opening permissions broadly).
+
+    cp .env.example .env
+    # Edit .env: token + absolute FORGECLAW_WORKSPACE_ROOT
+    docker compose up --build -d
+    docker compose logs -f forgeclaw
+
+Open http://127.0.0.1:8000/ui. In the UI, use paths as seen inside the container, for example `/workspace/my-project`, not the host path. The container runs as a non-root user, drops Linux capabilities, uses a read-only root filesystem, and persists SQLite in a named volume. Keep the port bound to localhost; remote access needs a properly authenticated HTTPS reverse proxy. Back up the Docker volume and repository data.
+
 ## Model configuration
 
 Set the default provider in .env:
