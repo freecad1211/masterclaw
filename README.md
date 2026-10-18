@@ -43,7 +43,7 @@ Per-role overrides use FORGECLAW_AGENT_<ROLE>_BASE_URL, _API_KEY, and _MODEL. Su
 - GET /api/v1/developer/mcp-tools — built-in MCP tool catalog
 - POST /api/v1/developer/runs — start a run
 - GET /api/v1/developer/runs — list current-process runs
-- GET /api/v1/developer/runs/{run_id} — run status, task status, events, reviews, test output, and commits
+- GET /api/v1/developer/runs/{run_id} — run status, task status, events, reviews, test output, and commits\n- POST /api/v1/developer/runs/{run_id}/messages — append a directed agent-to-agent message\n- POST /api/v1/developer/runs/{run_id}/approve-merge — explicitly approve a verified integration branch for local merge
 
 Example request:
 
