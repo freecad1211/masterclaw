@@ -4,6 +4,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
+from forgeclaw.core.settings import settings
+
 
 AgentRole = Literal["architect", "critic", "researcher", "judge"]
 
@@ -15,7 +17,12 @@ def utc_now() -> datetime:
 class DebateRequest(BaseModel):
     topic: str = Field(min_length=3, max_length=4000)
     context: str = Field(default="", max_length=12000)
-    max_rounds: int = Field(default=2, ge=1, le=3)
+    max_rounds: int = Field(
+        default_factory=lambda: settings.debate_max_rounds,
+        ge=1,
+        le=3,
+        validate_default=True,
+    )
 
 
 class AgentMessage(BaseModel):
