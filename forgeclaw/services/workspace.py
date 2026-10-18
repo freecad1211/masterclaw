@@ -73,13 +73,13 @@ class GitWorkspace:
     def context_snapshot(self, cwd: Path, allowed_paths: list[str] | None = None, max_chars: int = 22000) -> str:
         """Provide bounded, secret-filtered repository context to agents without shell access."""
         root = cwd.resolve()
-        excluded_dirs = {".git", ".venv", "venv", "node_modules", "__pycache__", ".next", ".forgeclaw", "dist", "build", "coverage"}
-        excluded_names = {".env", ".env.local", ".env.production", "id_rsa", "id_ed25519"}
+        excluded_dirs = {".git", ".venv", "venv", "node_modules", "__pycache__", ".next", ".forgeclaw", "dist", "build", "coverage", ".ssh", ".gnupg", ".aws", ".azure", ".kube"}
+        excluded_names = {".env", ".env.local", ".env.production", ".npmrc", ".pypirc", ".netrc", "credentials", "credentials.json", "service-account.json", "id_rsa", "id_ed25519"}
         files: list[str] = []
         for current, dirs, names in os.walk(root):
             dirs[:] = sorted(name for name in dirs if name not in excluded_dirs)
             for name in sorted(names):
-                if name in excluded_names or name.startswith(".env.") or name.endswith((".png", ".jpg", ".jpeg", ".gif", ".pdf", ".zip", ".sqlite3")):
+                lowered = name.lower()\n                if name in excluded_names or name.startswith(".env.") or lowered.endswith((".pem", ".key", ".p12", ".pfx", ".jks", ".sqlite3", ".png", ".jpg", ".jpeg", ".gif", ".pdf", ".zip")) or any(token in lowered for token in ("secret", "credential", "private_key", "api_token")):
                     continue
                 path = Path(current) / name
                 try:
