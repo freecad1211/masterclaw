@@ -1,0 +1,33 @@
+name: security
+
+on:
+  push:
+    branches: [main, "feature/**", "fix/**"]
+  pull_request:
+  schedule:
+    - cron: "23 8 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip pip-audit
+      - run: pip-audit -r <(python -c "import tomllib; print('')") || pip-audit
+
+  secret-patterns:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for accidentally committed env files
+        run: |
+          if git ls-files | grep -E '(^|/)\.env($|\.)|\.pem$|\.key$|id_rsa'; then
+            echo "Potential secret-bearing file is tracked. Review the match."
+            exit 1
+          fi
