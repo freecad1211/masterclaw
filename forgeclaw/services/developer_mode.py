@@ -119,11 +119,24 @@ class DeveloperModeService:
         core = _prompt("system.md")
         role_prompt = _prompt(f"roles/{role}.md")
         system = f"{core}\n\n--- Assigned role ---\n{role_prompt}"
+        from forgeclaw.services.skills import BUILTIN_SKILLS
+        role_skills = {
+            "architect": ("repo-exploration",),
+            "implementer": ("implementation", "secure-tool-use"),
+            "reviewer": ("independent-code-review", "secure-tool-use"),
+            "tester": ("test-driven-debugging",),
+            "integrator": ("git-integration", "secure-tool-use"),
+        }.get(role, ())
+        selected_skills = [skill for skill in BUILTIN_SKILLS if skill.name in role_skills]
+        if selected_skills:
+            system += "\n\n--- Activated built-in skills ---\n" + "\n\n".join(
+                f"## {skill.name}\n{skill.instructions}" for skill in selected_skills
+            )
         if system_extra:
             system += "\n\n--- Task-specific rules ---\n" + system_extra
         return client.complete(system_prompt=system, user_prompt=task, temperature=temperature)
 
-    def _plan_tasks(self, run: DeveloperRun, request: DeveloperRunRequest) -> list[DeveloperTask]:
+    def _plan_tasks(self, run: DeveloperRun, request: DeveloperRunRequest, workspace: GitWorkspace) -> list[DeveloperTask]:
         if request.tasks:
             tasks = request.tasks
         else:
@@ -133,7 +146,7 @@ class DeveloperModeService:
                 "Each item must have id, title, description, owner (implementer), depends_on (array of task IDs), "
                 "and allowed_paths (non-empty list of repository-relative paths/globs). Use unique short IDs. "
                 "Keep tasks independently committable, avoid overlapping allowed_paths when possible, and include acceptance criteria.\n\n"
-                f"Repository: {run.repo_path}\nGoal:\n{run.goal}",
+                f"Repository: {run.repo_path}\nGoal:\n{run.goal}\n\nRepository context:\n{workspace.context_snapshot(workspace.repo)}",
                 temperature=0.1,
             )
             try:
@@ -194,6 +207,7 @@ class DeveloperModeService:
         task.branch = f"feature/forgeclaw-{run.id[:8]}-{_safe_slug(task.id)}"
         try:
             worktree = workspace.create(task.branch, branch_base)
+            repo_context = workspace.context_snapshot(worktree, task.allowed_paths)
             task.status = "running"
             self._emit(run, task.owner, "status", f"Started {task.title} on {task.branch}, based on {branch_base}.", task.id)
             feedback = ""
@@ -204,6 +218,7 @@ class DeveloperModeService:
                     f"Allowed paths (no other file may change): {json.dumps(task.allowed_paths)}\n"
                     f"Branch: {task.branch}\nAttempt: {attempt + 1} of {max_revisions + 1}\n"
                     f"Previous test/review feedback:\n{feedback or '(none yet)'}\n\n"
+                    f"Repository context and relevant source files:\n{repo_context}\n\n"
                     "Return a valid unified Git diff only. Paths must be relative to repository root. "
                     "Do not include explanations, shell commands, secrets, or files outside allowed_paths."
                 )
@@ -276,7 +291,7 @@ class DeveloperModeService:
             workspace = GitWorkspace(run.repo_path, run.id)
             workspace.ensure_clean_base(run.base_branch)
             self._emit(run, "orchestrator", "status", "Repository is clean; preparing task plan.")
-            run.tasks = self._plan_tasks(run, request)
+            run.tasks = self._plan_tasks(run, request, workspace)
             waves = self._topological_waves(run.tasks)
             run.status = "running"
             task_branches: dict[str, str] = {}
