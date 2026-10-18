@@ -4,9 +4,11 @@ ForgeClaw is a free-first, self-hosted multi-agent workspace for research, colla
 
 ## Features
 
-- FastAPI API and SQLite-backed debate history
+- FastAPI API and SQLite-backed debate history (WAL mode, bounded busy timeout)
 - OpenAI-compatible model adapter, with independent model selection per agent role
 - Developer Mode with scoped tasks, parallel Git branches and worktrees, bounded revision loops, independent review, test capture, per-task commits, and integration branch
+- Browser-based Control Room at `/ui`: launch runs, monitor task state and agent events, inspect test/review output, and approve local integration merges
+- Structured JSON logs to stdout and optional rotating file, request IDs, duration/status logging, secret redaction, health and readiness endpoints
 - Built-in skills for repository exploration, implementation, debugging, code review, Git integration, and secure tool use
 - Built-in MCP stdio server for safe workspace inspection and allowlisted test commands
 - Original role-specific prompts informed by public DeepSeek Harness, OpenCode, Codex, and Claude Code documentation
@@ -19,9 +21,40 @@ Python 3.11+
     source .venv/bin/activate
     pip install -e ".[dev]"
     cp .env.example .env
-    uvicorn forgeclaw.main:app --reload
+    # Generate a token and put it in FORGECLAW_API_TOKEN in .env:
+    python -c "import secrets; print(secrets.token_urlsafe(32))"
+    uvicorn forgeclaw.main:app --host 127.0.0.1 --port 8000
 
-Open http://127.0.0.1:8000/docs. Before using Developer Mode, generate a strong token and set FORGECLAW_API_TOKEN in .env; the write/run/history/message/merge endpoints require an Authorization: Bearer token. For example, generate one with: python -c "import secrets; print(secrets.token_urlsafe(32))".
+Open the Control Room at http://127.0.0.1:8000/ui or API docs at http://127.0.0.1:8000/docs. The server binds to localhost by default; do not expose it publicly without a proper deployment boundary, TLS, and network access controls.
+
+## Production logging and health
+
+Logs are newline-delimited JSON. By default, they go to stdout for container/systemd collection. Configure:
+
+    FORGECLAW_LOG_LEVEL=INFO
+    FORGECLAW_LOG_FILE=./logs/forgeclaw.jsonl
+    FORGECLAW_LOG_MAX_BYTES=10485760
+    FORGECLAW_LOG_BACKUP_COUNT=5
+
+The optional file handler rotates at the configured byte limit and retains the configured number of backups. Logs include a request ID, method, path (not query string), response status, and duration. Authorization/API-key/token/password-like fields and common token patterns are redacted. Never place secrets in free-form error text; redaction is defense in depth, not a substitute for secret hygiene.
+
+- `GET /health` — process liveness
+- `GET /ready` — database connectivity readiness
+- `X-Request-ID` — generated for each request and returned to clients; a supplied value is bounded and propagated
+- `/ui` — same-origin dashboard; the Developer Mode API token is kept in the current browser tab's session storage
+
+The dashboard polls run status every four seconds. The token is not persisted across browser sessions. For shared machines, remove it from the dashboard and close the tab after use.
+
+## Container deployment
+
+For a self-hosted single-node install, set a strong `FORGECLAW_API_TOKEN` in `.env` and set `FORGECLAW_WORKSPACE_ROOT` to a directory containing only trusted repositories. Ensure container UID/GID `10001` has write access to that directory (use a dedicated workspace directory and a narrowly scoped ACL rather than opening permissions broadly).
+
+    cp .env.example .env
+    # Edit .env: token + absolute FORGECLAW_WORKSPACE_ROOT
+    docker compose up --build -d
+    docker compose logs -f forgeclaw
+
+Open http://127.0.0.1:8000/ui. In the UI, use paths as seen inside the container, for example `/workspace/my-project`, not the host path. The container runs as a non-root user, drops Linux capabilities, uses a read-only root filesystem, and persists SQLite in a named volume. Keep the port bound to localhost; remote access needs a properly authenticated HTTPS reverse proxy. Back up the Docker volume and repository data.
 
 ## Model configuration
 
@@ -43,7 +76,9 @@ Per-role overrides use FORGECLAW_AGENT_<ROLE>_BASE_URL, _API_KEY, and _MODEL. Su
 - GET /api/v1/developer/mcp-tools — built-in MCP tool catalog
 - POST /api/v1/developer/runs — start a run
 - GET /api/v1/developer/runs — list current-process runs
-- GET /api/v1/developer/runs/{run_id} — run status, task status, events, reviews, test output, and commits\n- POST /api/v1/developer/runs/{run_id}/messages — append a directed agent-to-agent message\n- POST /api/v1/developer/runs/{run_id}/approve-merge — explicitly approve a verified integration branch for local merge
+- GET /api/v1/developer/runs/{run_id} — run status, task status, events, reviews, test output, and commits
+- POST /api/v1/developer/runs/{run_id}/messages — append a directed agent-to-agent message
+- POST /api/v1/developer/runs/{run_id}/approve-merge — explicitly approve a verified integration branch for local merge
 
 Every Developer Mode run/history/message/merge request must include the configured Bearer token in the Authorization header. Example request:
 
@@ -96,14 +131,17 @@ Built-in tools: workspace_tree, read_file, search_files, workspace_status, git_s
 
 References and design rationale: docs/PROMPT_SOURCES.md. These are original ForgeClaw prompts informed by public documentation; they are not claimed to be copies of proprietary vendor system prompts.
 
-## Limitations and security
+## Harness and security boundaries
 
-- Run state and event history are currently held in process memory; restarting the API loses run history, but Git branches and commits remain in the repository.
+- CI runs the Python test suite on pushes and pull requests.
+- Work is split into bounded tasks with explicit file scopes; generated patches are validated before application; tests and independent review gate commits.
+- Default merge behavior requires human approval. Auto-merge is opt-in and only local.
+- API run state and event history are currently in process memory. A process restart loses Developer Mode history; use Git branches and commits as the durable execution audit until persistent run storage is implemented.
+- The MCP server and test/build commands execute in a trusted local workspace. Review repositories before running their scripts.
+- The dashboard token is held in session storage, not cookies; use only over localhost or behind a trusted HTTPS reverse proxy with access controls.
 - Model output is text-based unified diffs rather than native model tool calls.
-- The MCP server is intended for a trusted local workspace. Review any repository before allowing an agent to execute project test/build scripts.
-- No authentication is included yet. Do not expose the API publicly without adding authentication and TLS.
+- No remote push, pull-request automation, deployment, cancellation, or Obsidian integration is implemented yet.
 - Never commit API keys, Obsidian tokens, or private Vault content.
-- Obsidian integration, remote push/PR creation, deployment, cancellation, and UI are not implemented yet.
 
 ## Test
 
