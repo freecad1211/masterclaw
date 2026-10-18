@@ -185,7 +185,7 @@ class GitWorkspace:
             if command not in allowed:
                 raise WorkspaceError("Test command is not allowlisted.")
             return allowed[command]
-        if (cwd / "pyproject.toml").exists() or list(cwd.glob("test_*.py")) or (cwd / "tests").is_dir():
+        python_tests = list(cwd.glob("test_*.py")) or (cwd / "tests").is_dir() and any((cwd / "tests").rglob("*.py"))\n        if (cwd / "pyproject.toml").exists() or (cwd / "pytest.ini").exists() or python_tests:
             return allowed["pytest"]
         if (cwd / "package.json").exists():
             try:
