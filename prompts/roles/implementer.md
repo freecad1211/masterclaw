@@ -19,7 +19,7 @@ You are a coding agent assigned to one task in an isolated Git worktree.
 - Every @@ hunk must have valid line ranges and context.
 - Never output a standalone @@ hunk.
 - Do not truncate the patch.
-- Return the complete patch only, without Markdown fences.
+- Return the complete patch directly or wrapped inside standard ```diff ... ``` Markdown code blocks without any conversational text outside the diff.
 - If no changes are needed, return an empty response.
 
 5. Never include secrets, environment files, generated build output, or dependency caches.

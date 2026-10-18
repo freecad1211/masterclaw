@@ -39,6 +39,26 @@ def _strip_fence(value: str) -> str:
     return value
 
 
+def _extract_json_payload(value: str) -> str:
+    """Extract a JSON array/object from response, handling markdown fences or surrounding prose."""
+    value = value.strip()
+    # First try removing markdown fences if present
+    stripped = _strip_fence(value)
+    if (stripped.startswith("[") and stripped.endswith("]")) or (stripped.startswith("{") and stripped.endswith("}")):
+        return stripped
+    # Search for first '[' and last ']' for array payloads
+    first_bracket = value.find("[")
+    last_bracket = value.rfind("]")
+    if first_bracket >= 0 and last_bracket > first_bracket:
+        return value[first_bracket:last_bracket + 1]
+    # Search for first '{' and last '}' for object payloads
+    first_brace = value.find("{")
+    last_brace = value.rfind("}")
+    if first_brace >= 0 and last_brace > first_brace:
+        return value[first_brace:last_brace + 1]
+    return stripped
+
+
 def _safe_slug(value: str) -> str:
     slug = re.sub(r"[^a-zA-Z0-9._-]+", "-", value).strip("-").lower()
     return (slug or "task")[:36]
@@ -197,7 +217,8 @@ class DeveloperModeService:
                 temperature=0.1,
             )
             try:
-                payload = json.loads(_strip_fence(response))
+                json_str = _extract_json_payload(response)
+                payload = json.loads(json_str)
                 tasks = [DeveloperTask.model_validate(item) for item in payload]
             except (ValueError, ValidationError, TypeError) as exc:
                 raise RuntimeError("Architect returned an invalid task plan; expected a JSON array of scoped tasks.") from exc
@@ -242,11 +263,16 @@ class DeveloperModeService:
 
     @staticmethod
     def _extract_patch(response: str) -> str:
-        response = _strip_fence(response)
+        # First try stripping any markdown fences
+        stripped = _strip_fence(response)
+        start = stripped.find("diff --git ")
+        if start >= 0:
+            return stripped[start:].strip() + "\n"
+        # If not found, try to find the diff --git line in the original response
         start = response.find("diff --git ")
-        if start < 0:
-            raise RuntimeError("Implementer did not return a unified diff; refusing to modify the worktree.")
-        return response[start:].strip() + "\n"
+        if start >= 0:
+            return response[start:].strip() + "\n"
+        raise RuntimeError("Implementer did not return a unified diff; refusing to modify the worktree.")
 
     def _run_task(
         self,
@@ -321,7 +347,7 @@ class DeveloperModeService:
                 task.review_output = review[:10000]
                 self._emit(run, "reviewer", "review", review[:8000], task.id)
                 self._emit(run, "reviewer", "message", review[:8000], task.id, recipient="implementer")
-                if review.lstrip().startswith("APPROVED"):
+                if review.strip().upper().startswith("APPROVED"):
                     task.commit_sha = workspace.commit(worktree, f"feat({task.id}): {task.title}")
                     task.status = "passed"
                     self._emit(run, task.owner, "commit", f"Committed {task.commit_sha} on {task.branch}.", task.id)

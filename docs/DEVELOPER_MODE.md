@@ -24,6 +24,11 @@ Each role can use a different OpenAI-compatible provider via environment variabl
 8. Run the full test suite on the integration branch.
 9. By default, stop at needs_approval. Local merge into the base branch requires explicit auto_merge=true, a clean original working tree, and a successful final test run. No remote push is performed.
 
+## How Agents Modify Files and Execute Commands
+
+- **File modifications**: Agents do not edit files directly. The Implementer role outputs a unified Git diff. The system validates the diff (no disallowed paths) and applies it with `git apply` inside an isolated Git worktree for the task.
+- **Command execution**: Agents cannot run arbitrary shell commands. The system only allows a predefined allowlist of test and build commands (e.g., `pytest`, `npm test`) to be executed via the MCP `run_tests` tool or the internal workspace service. This ensures safety and reproducibility.
+
 ## Agent communication
 
 Events form a run-scoped conversation log. Agents can read task status and prior feedback, and reviewer findings/test failures are passed back to the implementer. This is workflow messaging, not unrestricted free-form chat.
