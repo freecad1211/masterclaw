@@ -107,6 +107,11 @@ class GitWorkspace:
                 extra.append(result.stdout[:12000])
         return "\n".join(part for part in (tracked, working, *extra) if part.strip())[:30000]
 
+    def reset_changes(self, cwd: Path) -> None:
+        """Discard only uncommitted changes inside this disposable agent worktree."""
+        self._git(["reset", "--hard", "HEAD"], cwd=cwd)
+        self._git(["clean", "-fd"], cwd=cwd)
+
     def commit(self, cwd: Path, message: str) -> str:
         self._git(["add", "-A"], cwd=cwd)
         if not self._git(["status", "--porcelain"], cwd=cwd):
