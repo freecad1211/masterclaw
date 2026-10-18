@@ -8,4 +8,5 @@ __pycache__/
 !.env.example
 data/
 *.sqlite3
+.forgeclaw/
 .DS_Store
