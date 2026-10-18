@@ -73,6 +73,15 @@ class DeveloperModeService:
             try:
                 for payload in list_developer_runs(settings.database_path, limit=100):
                     run = DeveloperRun.model_validate(payload)
+                    if run.status in {"queued", "planning", "running", "reviewing", "integrating"}:
+                        run.status = "failed"
+                        run.error = "The API process restarted during this run. Its Git branches/worktrees were retained for manual recovery; automatic resume is not supported yet."
+                        run.updated_at = datetime.now(timezone.utc)
+                        run.events.append(AgentEvent(
+                            run_id=run.id, agent="orchestrator", event_type="error",
+                            content=run.error, created_at=run.updated_at,
+                        ))
+                        save_developer_run(settings.database_path, run.model_dump(mode="json"))
                     self._runs[run.id] = run
             except Exception:
                 import logging
@@ -120,6 +129,12 @@ class DeveloperModeService:
         with self._lock:
             run.events.append(event)
             run.updated_at = datetime.now(timezone.utc)
+        import logging
+        logging.getLogger("forgeclaw.agents").info(
+            "agent_event",
+            extra={"event": "agent_event", "run_id": run.id, "agent": agent,
+                   "task_id": task_id, "event_type": event_type, "content_length": len(content)},
+        )
         self._persist(run)
         return event
 
