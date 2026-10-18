@@ -206,18 +206,31 @@ class DeveloperModeService:
                     "Return a valid unified Git diff only. Paths must be relative to repository root. "
                     "Do not include explanations, shell commands, secrets, or files outside allowed_paths."
                 )
+                current_diff = workspace.diff(worktree, branch_base)
+                if current_diff:
+                    prompt += "\n\nCurrent worktree diff (already applied; return only an incremental patch that applies on top of this state):\n" + current_diff[-16000:]
                 response = self._complete("implementer", prompt, temperature=0.1)
-                patch = self._extract_patch(response)
-                workspace.apply_patch(worktree, patch)
-                changed = workspace.changed_paths(worktree)
-                allowed = task.allowed_paths
-                unexpected = [
-                    path for path in changed
-                    if not any(Path(path).match(pattern) or path == pattern.rstrip("/") or path.startswith(pattern.rstrip("/") + "/")
-                               for pattern in allowed)
-                ]
-                if unexpected:
-                    raise WorkspaceError(f"Patch changed files outside assigned scope: {unexpected[:20]}")
+                try:
+                    patch = self._extract_patch(response)
+                    workspace.apply_patch(worktree, patch)
+                    changed = workspace.changed_paths(worktree)
+                    allowed = task.allowed_paths
+                    unexpected = [
+                        path for path in changed
+                        if not any(Path(path).match(pattern) or path == pattern.rstrip("/") or path.startswith(pattern.rstrip("/") + "/")
+                                   for pattern in allowed)
+                    ]
+                    if unexpected:
+                        workspace.reset_changes(worktree)
+                        feedback = f"PATCH REJECTED: changes outside allowed paths: {unexpected[:20]}. Return a patch limited to {allowed}."
+                        if attempt < max_revisions:
+                            continue
+                        raise WorkspaceError(feedback)
+                except WorkspaceError as exc:
+                    feedback = f"PATCH VALIDATION FAILED: {exc}. Return a corrected incremental patch."
+                    if attempt < max_revisions:
+                        continue
+                    raise
                 code, test_output = workspace.run_tests(worktree, request.test_command)
                 task.test_output = f"exit_code={code}\n{test_output}"
                 self._emit(run, "tester", "test", f"pytest exit code: {code}\n{test_output[-5000:]}", task.id)
