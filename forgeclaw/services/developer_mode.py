@@ -189,6 +189,7 @@ class DeveloperModeService:
         workspace: GitWorkspace,
         branch_base: str,
         max_revisions: int,
+        test_command: str,
     ) -> DeveloperTask:
         task.branch = f"feature/forgeclaw-{run.id[:8]}-{_safe_slug(task.id)}"
         try:
@@ -231,9 +232,9 @@ class DeveloperModeService:
                     if attempt < max_revisions:
                         continue
                     raise
-                code, test_output = workspace.run_tests(worktree, request.test_command)
+                code, test_output = workspace.run_tests(worktree, test_command)
                 task.test_output = f"exit_code={code}\n{test_output}"
-                self._emit(run, "tester", "test", f"pytest exit code: {code}\n{test_output[-5000:]}", task.id)
+                self._emit(run, "tester", "test", f"Configured test command exit code: {code}\n{test_output[-5000:]}", task.id)
                 if code != 0:
                     feedback = "TESTS FAILED. Fix the implementation. Captured test output:\n" + test_output[-7000:]
                     if attempt < max_revisions:
@@ -286,7 +287,7 @@ class DeveloperModeService:
                 with ThreadPoolExecutor(max_workers=min(request.max_agents, len(wave))) as pool:
                     for task in wave:
                         parent_branch = task_branches.get(task.depends_on[-1], run.base_branch) if task.depends_on else run.base_branch
-                        futures[pool.submit(self._run_task, run, task, workspace, parent_branch, request.max_revisions)] = task
+                        futures[pool.submit(self._run_task, run, task, workspace, parent_branch, request.max_revisions, request.test_command)] = task
                     for future in as_completed(futures):
                         task = future.result()
                         if task.status == "passed":
