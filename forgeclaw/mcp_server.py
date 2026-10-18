@@ -108,10 +108,21 @@ def run_tests(command: str = "pytest") -> dict[str, str | int]:
         "pytest": ["pytest"],
         "python -m pytest": ["python", "-m", "pytest"],
         "python -m compileall forgeclaw": ["python", "-m", "compileall", "forgeclaw"],
+        "npm test": ["npm", "test"],
+        "npm run lint": ["npm", "run", "lint"],
+        "npm run build": ["npm", "run", "build"],
+        "pnpm test": ["pnpm", "test"],
+        "pnpm lint": ["pnpm", "lint"],
+        "pnpm build": ["pnpm", "build"],
+        "yarn test": ["yarn", "test"],
+        "yarn lint": ["yarn", "lint"],
+        "yarn build": ["yarn", "build"],
+        "cargo test": ["cargo", "test"],
+        "go test ./...": ["go", "test", "./..."],
     }
     if command not in allowed:
-        raise ValueError("Only pytest, python -m pytest, and python -m compileall forgeclaw are allowed.")
-    result = subprocess.run(allowed[command], cwd=ROOT, capture_output=True, text=True, timeout=300)
+        raise ValueError("Test command is not allowlisted.")
+    result = subprocess.run(allowed[command], cwd=ROOT, capture_output=True, text=True, timeout=600)
     return {"exit_code": result.returncode, "output": (result.stdout + "\n" + result.stderr)[-10000:]}
 
 
