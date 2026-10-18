@@ -13,8 +13,8 @@ from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("ForgeClaw Workspace")
 ROOT = Path(os.getenv("FORGECLAW_MCP_WORKSPACE", os.getcwd())).resolve()
-SKIP_DIRS = {".git", ".venv", "venv", "node_modules", "__pycache__", ".next", ".forgeclaw"}
-SKIP_NAMES = {".env", ".env.local", ".env.production", "id_rsa", "id_ed25519"}
+SKIP_DIRS = {".git", ".venv", "venv", "node_modules", "__pycache__", ".next", ".forgeclaw", ".ssh", ".gnupg", ".aws", ".azure", ".kube"}
+SKIP_NAMES = {".env", ".env.local", ".env.production", ".npmrc", ".pypirc", ".netrc", "credentials", "credentials.json", "service-account.json", "id_rsa", "id_ed25519"}
 
 
 def _safe_path(relative_path: str) -> Path:
@@ -23,7 +23,8 @@ def _safe_path(relative_path: str) -> Path:
         raise ValueError("Path escapes the configured workspace.")
     if any(part in SKIP_DIRS for part in target.relative_to(ROOT).parts):
         raise ValueError("Access to excluded directories is blocked.")
-    if target.name in SKIP_NAMES or target.name.startswith(".env."):
+    lowered = target.name.lower()
+    if target.name in SKIP_NAMES or target.name.startswith(".env.") or lowered.endswith((".pem", ".key", ".p12", ".pfx", ".jks")) or any(token in lowered for token in ("secret", "credential", "private_key", "api_token")):
         raise ValueError("Secret/config files are not readable through this tool.")
     return target
 
@@ -35,7 +36,9 @@ def workspace_tree(max_entries: int = 200) -> list[str]:
     for path in ROOT.rglob("*"):
         if any(part in SKIP_DIRS for part in path.relative_to(ROOT).parts):
             continue
-        if path.is_file() and path.name not in SKIP_NAMES and not path.name.startswith(".env."):
+        lowered = path.name.lower()
+        sensitive = path.name in SKIP_NAMES or path.name.startswith(".env.") or lowered.endswith((".pem", ".key", ".p12", ".pfx", ".jks")) or any(token in lowered for token in ("secret", "credential", "private_key", "api_token"))
+        if path.is_file() and not sensitive:
             entries.append(path.relative_to(ROOT).as_posix())
             if len(entries) >= min(max_entries, 500):
                 break
