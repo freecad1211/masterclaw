@@ -17,7 +17,7 @@ class GitWorkspace:
         self.repo = Path(repo_path).expanduser().resolve()
         if not (self.repo / ".git").exists():
             raise WorkspaceError("repo_path must point to a Git repository root.")
-        self.worktrees = self.repo / ".forgeclaw" / "worktrees" / run_id
+        self.worktrees = self.repo.parent / f".forgeclaw-{self.repo.name}" / "worktrees" / run_id
         self.worktrees.mkdir(parents=True, exist_ok=True)
         self._git(["rev-parse", "--show-toplevel"])
 
@@ -69,6 +69,51 @@ class GitWorkspace:
 
     def status(self, cwd: Path) -> str:
         return self._git(["status", "--short", "--branch"], cwd=cwd)
+
+    def context_snapshot(self, cwd: Path, allowed_paths: list[str] | None = None, max_chars: int = 22000) -> str:
+        """Provide bounded, secret-filtered repository context to agents without shell access."""
+        root = cwd.resolve()
+        excluded_dirs = {".git", ".venv", "venv", "node_modules", "__pycache__", ".next", ".forgeclaw", "dist", "build", "coverage"}
+        excluded_names = {".env", ".env.local", ".env.production", "id_rsa", "id_ed25519"}
+        files: list[str] = []
+        for current, dirs, names in os.walk(root):
+            dirs[:] = sorted(name for name in dirs if name not in excluded_dirs)
+            for name in sorted(names):
+                if name in excluded_names or name.startswith(".env.") or name.endswith((".png", ".jpg", ".jpeg", ".gif", ".pdf", ".zip", ".sqlite3")):
+                    continue
+                path = Path(current) / name
+                try:
+                    rel = path.relative_to(root).as_posix()
+                except ValueError:
+                    continue
+                files.append(rel)
+                if len(files) >= 400:
+                    break
+            if len(files) >= 400:
+                break
+        key_files = {"README.md", "AGENTS.md", "CLAUDE.md", "pyproject.toml", "package.json", "tsconfig.json", "Cargo.toml", "go.mod", "requirements.txt"}
+        selected: list[str] = []
+        for rel in files:
+            scoped = allowed_paths and any(
+                Path(rel).match(pattern) or rel == pattern.rstrip("/") or rel.startswith(pattern.rstrip("/") + "/")
+                for pattern in allowed_paths
+            )
+            if rel in key_files or rel in {"src/AGENTS.md", "src/CLAUDE.md"} or scoped:
+                selected.append(rel)
+        chunks = ["Repository tree (bounded):\n" + "\n".join(files[:300]), "\nRelevant file excerpts:"]
+        remaining = max_chars - sum(len(part) for part in chunks)
+        for rel in selected[:40]:
+            if remaining <= 0:
+                break
+            try:
+                text = (root / rel).read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            excerpt = text[:min(5000, remaining)]
+            chunk = f"\n--- {rel} ---\n{excerpt}"
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        return "\n".join(chunks)[:max_chars]
 
     def apply_patch(self, cwd: Path, patch: str) -> None:
         if not patch.strip() or "diff --git " not in patch:
