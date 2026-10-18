@@ -14,6 +14,9 @@ def test_create_and_read_debate(tmp_path, monkeypatch):
     db_path = str(tmp_path / "test.sqlite3")
     monkeypatch.setattr("forgeclaw.core.settings.settings.database_path", db_path)
     monkeypatch.setattr("forgeclaw.api.routes.settings.database_path", db_path)
+    # Ensure LLM is not configured so the service uses demo agents
+    monkeypatch.setattr("forgeclaw.core.settings.settings.llm_base_url", "")
+    monkeypatch.setattr("forgeclaw.core.settings.settings.llm_model", "")
     from forgeclaw.services.debate_service import DebateService
     monkeypatch.setattr("forgeclaw.api.routes.service", DebateService(database_path=db_path))
 
@@ -42,6 +45,9 @@ def test_create_and_read_debate(tmp_path, monkeypatch):
 def test_single_round_has_no_revision(tmp_path, monkeypatch):
     db_path = str(tmp_path / "single-round.sqlite3")
     monkeypatch.setattr("forgeclaw.core.settings.settings.database_path", db_path)
+    # Ensure LLM is not configured so the service uses demo agents
+    monkeypatch.setattr("forgeclaw.core.settings.settings.llm_base_url", "")
+    monkeypatch.setattr("forgeclaw.core.settings.settings.llm_model", "")
     from forgeclaw.services.debate_service import DebateService
     monkeypatch.setattr("forgeclaw.api.routes.service", DebateService(database_path=db_path))
 
