@@ -13,6 +13,8 @@ from pydantic import ValidationError
 from forgeclaw.models.developer import AgentEvent, DeveloperRun, DeveloperRunRequest, DeveloperTask
 from forgeclaw.services.model_router import AgentModelRouter
 from forgeclaw.services.workspace import GitWorkspace, WorkspaceError
+from forgeclaw.core.settings import settings
+from forgeclaw.storage.database import initialize_database, list_developer_runs, save_developer_run
 
 
 PROMPT_ROOT = Path(__file__).resolve().parents[2] / "prompts"
@@ -50,6 +52,7 @@ class DeveloperModeService:
         self._runs: dict[str, DeveloperRun] = {}
         self._lock = threading.RLock()
         self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="forgeclaw-run")
+        self._loaded = False
 
     def profiles(self) -> list[dict[str, str | bool]]:
         return self.models.available_profiles()
@@ -62,15 +65,42 @@ class DeveloperModeService:
         from forgeclaw.services.mcp_catalog import list_mcp_tools
         return list_mcp_tools()
 
+    def _ensure_loaded(self) -> None:
+        with self._lock:
+            if self._loaded:
+                return
+            initialize_database(settings.database_path)
+            try:
+                for payload in list_developer_runs(settings.database_path, limit=100):
+                    run = DeveloperRun.model_validate(payload)
+                    self._runs[run.id] = run
+            except Exception:
+                import logging
+                logging.getLogger("forgeclaw.storage").exception("failed_to_load_developer_runs")
+            self._loaded = True
+
+    def _persist(self, run: DeveloperRun) -> None:
+        try:
+            save_developer_run(settings.database_path, run.model_dump(mode="json"))
+        except Exception:
+            import logging
+            logging.getLogger("forgeclaw.storage").exception(
+                "failed_to_persist_developer_run",
+                extra={"event": "run_persist_failed", "run_id": run.id},
+            )
+
     def get_run(self, run_id: str) -> DeveloperRun | None:
+        self._ensure_loaded()
         with self._lock:
             return self._runs.get(run_id)
 
     def list_runs(self) -> list[DeveloperRun]:
+        self._ensure_loaded()
         with self._lock:
-            return sorted(self._runs.values(), key=lambda run: run.created_at, reverse=True)[:50]
+            return sorted(self._runs.values(), key=lambda run: run.updated_at, reverse=True)[:50]
 
     def start(self, request: DeveloperRunRequest) -> DeveloperRun:
+        self._ensure_loaded()
         run = DeveloperRun(
             goal=request.goal,
             repo_path=str(Path(request.repo_path).expanduser().resolve()),
@@ -81,6 +111,7 @@ class DeveloperModeService:
         with self._lock:
             self._runs[run.id] = run
         self._emit(run, "orchestrator", "status", "Developer Mode run queued.")
+        self._persist(run)
         self._executor.submit(self.execute, run.id, request)
         return run
 
@@ -89,6 +120,7 @@ class DeveloperModeService:
         with self._lock:
             run.events.append(event)
             run.updated_at = datetime.now(timezone.utc)
+        self._persist(run)
         return event
 
     def send_message(self, run_id: str, sender: str, recipient: str, content: str, task_id: str | None = None) -> AgentEvent:
@@ -344,3 +376,4 @@ class DeveloperModeService:
             self._emit(run, "orchestrator", "error", run.error)
         finally:
             run.updated_at = datetime.now(timezone.utc)
+            self._persist(run)
