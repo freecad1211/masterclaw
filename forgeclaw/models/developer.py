@@ -54,6 +54,7 @@ class AgentEvent(BaseModel):
     event_type: Literal["message", "status", "tool", "review", "test", "commit", "merge", "error"]
     content: str = Field(max_length=20000)
     task_id: str | None = None
+    recipient: str | None = None
     created_at: datetime = Field(default_factory=now_utc)
 
 
@@ -70,3 +71,10 @@ class DeveloperRun(BaseModel):
     error: str | None = None
     created_at: datetime = Field(default_factory=now_utc)
     updated_at: datetime = Field(default_factory=now_utc)
+
+
+class AgentMessageRequest(BaseModel):
+    sender: AgentKind
+    recipient: AgentKind
+    content: str = Field(min_length=1, max_length=8000)
+    task_id: str | None = None
