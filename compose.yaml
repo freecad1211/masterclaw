@@ -14,6 +14,7 @@ services:
       FORGECLAW_LOG_LEVEL: ${FORGECLAW_LOG_LEVEL:-INFO}
     volumes:
       - forgeclaw_data:/app/data
+      - forgeclaw_logs:/app/logs
       # Developer Mode accesses host repositories. Restrict this mount to trusted repositories.
       - ${FORGECLAW_WORKSPACE_ROOT:?Set FORGECLAW_WORKSPACE_ROOT to a trusted host repo directory}:/workspace
     security_opt:
@@ -32,3 +33,4 @@ services:
 
 volumes:
   forgeclaw_data:
+  forgeclaw_logs:
