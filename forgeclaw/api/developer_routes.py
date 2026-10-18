@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 
-from forgeclaw.models.developer import DeveloperRun, DeveloperRunRequest
+from forgeclaw.models.developer import AgentMessageRequest, DeveloperRun, DeveloperRunRequest
 from forgeclaw.services.developer_mode import DeveloperModeService
 
 router = APIRouter(prefix="/api/v1/developer", tags=["developer-mode"])
@@ -41,3 +41,24 @@ def get_developer_run(run_id: str) -> DeveloperRun:
     if run is None:
         raise HTTPException(status_code=404, detail="Developer run not found.")
     return run
+
+
+@router.post("/runs/{run_id}/messages")
+def send_agent_message(run_id: str, request: AgentMessageRequest) -> dict[str, object]:
+    try:
+        event = service.send_message(run_id, request.sender, request.recipient, request.content, request.task_id)
+        return event.model_dump(mode="json")
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/runs/{run_id}/approve-merge", response_model=DeveloperRun)
+def approve_local_merge(run_id: str) -> DeveloperRun:
+    try:
+        return service.approve_merge(run_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
