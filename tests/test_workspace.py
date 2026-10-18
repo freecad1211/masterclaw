@@ -60,3 +60,21 @@ def test_auto_detect_uses_package_script_when_tests_folder_is_javascript(tmp_pat
     )
     workspace = GitWorkspace(str(repo), "js-test-run")
     assert workspace._resolve_test_command(repo, "auto") == ["npm", "test"]
+
+
+def test_repository_context_excludes_common_secret_files(tmp_path):
+    repo = tmp_path / "secret-repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    (repo / "README.md").write_text("safe project description\n", encoding="utf-8")
+    (repo / ".env.local").write_text("VERY_SECRET_VALUE=do-not-send\n", encoding="utf-8")
+    (repo / ".npmrc").write_text("//registry.example/:_authToken=do-not-send\n", encoding="utf-8")
+    (repo / "api_secret.txt").write_text("another-secret-value\n", encoding="utf-8")
+
+    workspace = GitWorkspace(str(repo), "secret-context-test")
+    snapshot = workspace.context_snapshot(repo)
+
+    assert "safe project description" in snapshot
+    assert "VERY_SECRET_VALUE" not in snapshot
+    assert "_authToken" not in snapshot
+    assert "another-secret-value" not in snapshot
