@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -40,18 +41,15 @@ class GitWorkspace:
         current = self._git(["branch", "--show-current"])
         if current != base_branch:
             raise WorkspaceError(f"Repository must be checked out on base branch {base_branch!r}; current branch is {current!r}.")
-        status = self._git(["status", "--porcelain"])
-        if status:
+        if self._git(["status", "--porcelain"]):
             raise WorkspaceError("Repository has uncommitted changes. Commit or stash them before Developer Mode.")
         self._git(["rev-parse", "--verify", base_branch])
 
     def create(self, branch: str, base_branch: str) -> Path:
         safe_branch = branch.replace(" ", "-")
         target = (self.worktrees / safe_branch.split("/")[-1]).resolve()
-        if self.worktrees.resolve() not in target.parents:
-            raise WorkspaceError("Invalid worktree path.")
-        if target.exists():
-            raise WorkspaceError(f"Worktree path already exists: {target.name}")
+        if self.worktrees.resolve() not in target.parents or target.exists():
+            raise WorkspaceError("Worktree path already exists or is invalid.")
         self._git(["worktree", "add", "-b", safe_branch, str(target), base_branch], timeout=60)
         dependencies = self.repo / "node_modules"
         if dependencies.is_dir() and not (target / "node_modules").exists():
@@ -64,6 +62,9 @@ class GitWorkspace:
         if self.worktrees.resolve() not in target.parents or target.exists():
             raise WorkspaceError("Integration worktree path already exists or is invalid.")
         self._git(["worktree", "add", "-b", safe_branch, str(target), base_branch], timeout=60)
+        dependencies = self.repo / "node_modules"
+        if dependencies.is_dir() and not (target / "node_modules").exists():
+            (target / "node_modules").symlink_to(dependencies, target_is_directory=True)
         return target
 
     def status(self, cwd: Path) -> str:
@@ -72,9 +73,8 @@ class GitWorkspace:
     def apply_patch(self, cwd: Path, patch: str) -> None:
         if not patch.strip() or "diff --git " not in patch:
             raise WorkspaceError("Model did not return a standard unified Git diff.")
-        for flag in ("GIT_DIR=", "GIT_WORK_TREE=", "\x00"):
-            if flag in patch:
-                raise WorkspaceError("Patch contains an invalid control sequence.")
+        if "\x00" in patch:
+            raise WorkspaceError("Patch contains an invalid control sequence.")
         check = subprocess.run(
             ["git", "apply", "--check", "--whitespace=error"],
             input=patch, cwd=cwd, text=True, capture_output=True, timeout=30,
@@ -105,7 +105,7 @@ class GitWorkspace:
             )
             if result.returncode in (0, 1):
                 extra.append(result.stdout[:12000])
-        return "\\n".join(part for part in (tracked, working, *extra) if part.strip())[:30000]
+        return "\n".join(part for part in (tracked, working, *extra) if part.strip())[:30000]
 
     def commit(self, cwd: Path, message: str) -> str:
         self._git(["add", "-A"], cwd=cwd)
@@ -114,21 +114,63 @@ class GitWorkspace:
         self._git(["commit", "-m", message[:160]], cwd=cwd, timeout=60)
         return self._git(["rev-parse", "HEAD"], cwd=cwd)
 
-    def run_tests(self, cwd: Path, command: str = "pytest") -> tuple[int, str]:
+    def _resolve_test_command(self, cwd: Path, command: str) -> list[str]:
         allowed = {
             "pytest": ["pytest"],
             "python -m pytest": ["python", "-m", "pytest"],
             "python -m compileall forgeclaw": ["python", "-m", "compileall", "forgeclaw"],
+            "npm test": ["npm", "test"],
+            "npm run lint": ["npm", "run", "lint"],
+            "npm run build": ["npm", "run", "build"],
+            "pnpm test": ["pnpm", "test"],
+            "pnpm lint": ["pnpm", "lint"],
+            "pnpm build": ["pnpm", "build"],
+            "yarn test": ["yarn", "test"],
+            "yarn lint": ["yarn", "lint"],
+            "yarn build": ["yarn", "build"],
+            "cargo test": ["cargo", "test"],
+            "go test ./...": ["go", "test", "./..."],
         }
-        if command not in allowed:
-            raise WorkspaceError("Test command is not allowlisted.")
+        if command != "auto":
+            if command not in allowed:
+                raise WorkspaceError("Test command is not allowlisted.")
+            return allowed[command]
+        if (cwd / "pyproject.toml").exists() or list(cwd.glob("test_*.py")) or (cwd / "tests").is_dir():
+            return allowed["pytest"]
+        if (cwd / "package.json").exists():
+            try:
+                package = json.loads((cwd / "package.json").read_text(encoding="utf-8"))
+                scripts = package.get("scripts", {})
+            except (OSError, ValueError):
+                scripts = {}
+            if (cwd / "pnpm-lock.yaml").exists():
+                manager = "pnpm"
+            elif (cwd / "yarn.lock").exists():
+                manager = "yarn"
+            else:
+                manager = "npm"
+            if scripts.get("test"):
+                return allowed[f"{manager} test"]
+            if scripts.get("lint"):
+                return allowed["npm run lint"] if manager == "npm" else allowed[f"{manager} lint"]
+            if scripts.get("build"):
+                return allowed["npm run build"] if manager == "npm" else allowed[f"{manager} build"]
+            raise WorkspaceError("package.json has no test, lint, or build script.")
+        if (cwd / "Cargo.toml").exists():
+            return allowed["cargo test"]
+        if (cwd / "go.mod").exists():
+            return allowed["go test ./..."]
+        raise WorkspaceError("Could not detect a supported test command; set test_command explicitly.")
+
+    def run_tests(self, cwd: Path, command: str = "auto") -> tuple[int, str]:
+        args = self._resolve_test_command(cwd, command)
         try:
             result = subprocess.run(
-                allowed[command], cwd=cwd, text=True, capture_output=True, timeout=300, check=False,
-                env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+                args, cwd=cwd, text=True, capture_output=True, timeout=600, check=False,
+                env={**os.environ, "GIT_TERMINAL_PROMPT": "0", "PYTHONPATH": str(cwd) + os.pathsep + os.environ.get("PYTHONPATH", "")},
             )
         except subprocess.TimeoutExpired as exc:
-            return 124, f"Test command timed out after 300 seconds: {exc.cmd}"
+            return 124, f"Test command timed out after 600 seconds: {exc.cmd}"
         except OSError as exc:
             return 127, f"Test command could not start: {type(exc).__name__}"
         return result.returncode, (result.stdout + "\n" + result.stderr)[-12000:]
