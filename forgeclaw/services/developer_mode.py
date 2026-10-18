@@ -237,7 +237,8 @@ class DeveloperModeService:
                     temperature=0.0,
                 )
                 task.review_output = review[:10000]
-                self._emit(run, "reviewer", "review", review[:8000], task.id)\n                self._emit(run, "reviewer", "message", review[:8000], task.id, recipient="implementer")
+                self._emit(run, "reviewer", "review", review[:8000], task.id)
+                self._emit(run, "reviewer", "message", review[:8000], task.id, recipient="implementer")
                 if review.lstrip().startswith("APPROVED"):
                     task.commit_sha = workspace.commit(worktree, f"feat({task.id}): {task.title}")
                     task.status = "passed"
