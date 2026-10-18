@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from forgeclaw.core.settings import settings
 from forgeclaw.models.debate import DebateRecord, DebateRequest, DebateSummary
+from forgeclaw.models.openai_compatible import ModelProviderError
 from forgeclaw.services.debate_service import DebateService
 from forgeclaw.storage.database import get_debate, list_debates, save_debate
 
@@ -11,7 +12,10 @@ service = DebateService()
 
 @router.post("/debates", response_model=DebateRecord, status_code=201)
 def create_debate(request: DebateRequest) -> DebateRecord:
-    record = service.run(request)
+    try:
+        record = service.run(request)
+    except ModelProviderError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     save_debate(settings.database_path, record.model_dump(mode="json"))
     return record
 
