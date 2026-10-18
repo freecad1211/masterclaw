@@ -91,7 +91,18 @@ class GitWorkspace:
         return sorted(set(filter(None, result.splitlines() + untracked.splitlines())))
 
     def diff(self, cwd: Path, base_branch: str) -> str:
-        return self._git(["diff", "--no-ext-diff", f"{base_branch}...HEAD"], cwd=cwd)
+        tracked = self._git(["diff", "--no-ext-diff", f"{base_branch}...HEAD"], cwd=cwd)
+        working = self._git(["diff", "--no-ext-diff"], cwd=cwd)
+        untracked = self._git(["ls-files", "--others", "--exclude-standard"], cwd=cwd).splitlines()
+        extra: list[str] = []
+        for relative in untracked[:100]:
+            result = subprocess.run(
+                ["git", "diff", "--no-index", "--no-ext-diff", "--", "/dev/null", relative],
+                cwd=cwd, text=True, capture_output=True, timeout=15,
+            )
+            if result.returncode in (0, 1):
+                extra.append(result.stdout[:12000])
+        return "\\n".join(part for part in (tracked, working, *extra) if part.strip())[:30000]
 
     def commit(self, cwd: Path, message: str) -> str:
         self._git(["add", "-A"], cwd=cwd)
