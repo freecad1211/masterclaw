@@ -46,3 +46,17 @@ def test_workspace_rejects_arbitrary_test_command(tmp_path):
     workspace = GitWorkspace(str(repo), "command-test")
     with pytest.raises(WorkspaceError, match="allowlisted"):
         workspace.run_tests(repo, "rm -rf /")
+
+
+def test_auto_detect_uses_package_script_when_tests_folder_is_javascript(tmp_path):
+    repo = tmp_path / "jsrepo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    (repo / "tests").mkdir()
+    (repo / "tests" / "sample.test.ts").write_text("export {}\n", encoding="utf-8")
+    (repo / "package.json").write_text(
+        '{"name":"sample","scripts":{"test":"vitest run","build":"next build"}}',
+        encoding="utf-8",
+    )
+    workspace = GitWorkspace(str(repo), "js-test-run")
+    assert workspace._resolve_test_command(repo, "auto") == ["npm", "test"]
